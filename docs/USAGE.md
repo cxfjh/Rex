@@ -92,17 +92,18 @@ provide({ name, age }); // 注册
 
 ### 2. 模板指令
 
-| 指令 | 作用 | 示例 |
-|------|------|------|
-| `r-if` | 条件渲染 | `<div r-if="count.value > 5">显示</div>` |
-| `r-click` | 点击事件 | `<button r-click="count.value++">增加</button>` |
-| `r-model` | 双向绑定 | `<input type="text" r-model="name">` |
-| `r-for` | 循环渲染 | `<div r-for="count">第{{ index }}项</div>` |
-| `r-arr` | 数组循环 | `<div r-arr="list">值：{{ value }}</div>` |
-| `r-api` | 接口请求 | `<div r-api="https://api.com/data">...</div>` |
-| `r-cp` | 组件使用 | `<div r-cp="user" $name="张三"></div>` |
-| `r-route` | 路由跳转 | `<button r-route="home">首页</button>` |
-| `r` | DOM引用 | `<div r="container">容器</div>` |
+| 指令        | 作用    | 示例                                            |
+|-----------|-------|-----------------------------------------------|
+| `r-if`    | 条件渲染  | `<div r-if="count.value > 5">显示</div>`        |
+| `r-click` | 点击事件  | `<button r-click="count.value++">增加</button>` |
+| `r-model` | 双向绑定  | `<input type="text" r-model="name">`          |
+| `r-for`   | 循环渲染  | `<div r-for="count">第{{ index }}项</div>`      |
+| `r-arr`   | 数组循环  | `<div r-arr="list">值：{{ value }}</div>`       |
+| `r-api`   | 接口请求  | `<div r-api="https://api.com/data">...</div>` |
+| `r-cp`    | 组件使用  | `<div r-cp="user" $name="张三"></div>`          |
+| `r-route` | 路由跳转  | `<button r-route="home">首页</button>`          |
+| `r-dom`   | 组件引用  | `<div r-dom="user"></div>`                  |
+| `r`       | DOM引用 | `<div r="container">容器</div>`                 |
 
 #### 指令详细示例
 
@@ -318,13 +319,13 @@ const UserComponent = dom("user", {
 UserComponent({ initAge: 18 }, "#user", true);
 ```
 
-#### 使用组件
+#### r-dom 使用组件
 ```html
-<!-- 直接定义挂载容器 -->
+<!-- 定义挂载容器，需要挂载 -->
 <div id="user"></div>
 
-<!-- 或通过r-cp指令使用 -->
-<div r-cp="user" $initAge="22"></div>
+<!-- 或通过 r-dom="组件名" 指令使用，无需通过 UserComponent 挂载组件 -->
+<div r-dom="user" $initAge="22"></div>
 ```
 
 ### 4. 路由系统

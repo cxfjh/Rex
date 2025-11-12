@@ -679,8 +679,6 @@ _registerDirective("r-arr", (el, expr, scope, deps) => {
             arr = []; // 解析失败时渲染空
         }
         
-        if (arr.length === 0) return;
-        
         // 生成当前数组的唯一键列表
         const currKeys = arr.map((item, i) => getUniqueKey(item, i));
         const currKeySet = new Set(currKeys);
@@ -890,8 +888,7 @@ _registerDirective("r-api", async (el, urlExpr, scope, deps) => {
             tempContainer.innerHTML = templateHTML;
             _processElement(tempContainer, baseScope);
             Array.from(tempContainer.childNodes).forEach(node => fragment.appendChild(node));
-        }
-        else if (Array.isArray(data)) renderArray(data, fragment);
+        } else if (Array.isArray(data)) renderArray(data, fragment);
         else if (data && typeof data === "object") renderObject(data, fragment);
         
         el.appendChild(fragment);
@@ -1062,8 +1059,7 @@ _registerDirective("r-model", (el, path, scope) => {
         if (el.type === "checkbox") newValue = el.checked; else if (el.type === "radio") {
             if (!el.checked) return; // 只有选中的 radio 才触发更新
             newValue = el.value;
-        }
-        else if (el.tagName === "SELECT") newValue = el.value;
+        } else if (el.tagName === "SELECT") newValue = el.value;
         else newValue = el.type === "number" && !isNaN(el.value) ? parseFloat(el.value) : el.value;
         
         // 获取旧的模型值进行比较
@@ -1214,6 +1210,180 @@ _registerDirective("r", (el, refName) => {
     // 添加清理逻辑，当元素被销毁时从 $r 中移除
     const cleanup = () => {
         if (window.$r && window.$r[refName] === el) delete window.$r[refName];
+        el.removeEventListener("beforeunload", cleanup);
+    };
+    
+    el.addEventListener("beforeunload", cleanup);
+});
+
+
+// r-dom 指令
+_registerDirective("r-dom", (el, compName, scope, deps) => {
+    // 避免重复处理
+    if (el.__domProcessed) return;
+    el.__domProcessed = true;
+    const compNameTrimmed = compName.trim();
+    
+    // 组件模板存在性校验（提前失败）
+    if (!_componentTemplates.has(compNameTrimmed)) return void console.error(`[r-dom] 组件 "${compNameTrimmed}" 未定义，请先通过 dom("${compNameTrimmed}", {...}) 定义`);
+    
+    // 组件实例状态管理
+    let componentInstance = null;
+    let retryTimer = null;
+    let retryCount = 0;
+    const MAX_RETRY_COUNT = 3; // 最大重试次数
+    const RETRY_INTERVAL = 60; // 重试间隔(ms)
+    
+    // 提取组件 props
+    const getComponentProps = () => {
+        const props = {};
+        const attributes = el.attributes;
+        
+        for (let i = 0; i < attributes.length; i++) {
+            const attr = attributes[i];
+            if (attr.name.startsWith("$")) {
+                const propKey = attr.name.slice(1);
+                // 使用try-catch避免单个属性解析失败影响整体
+                try {
+                    props[propKey] = _ExpressionParser.parse(attr.value, scope, deps);
+                } catch (error) {
+                    console.warn(`[r-dom] 属性 "${attr.name}" 解析失败:`, error);
+                    props[propKey] = attr.value; // 降级为原始值
+                }
+            }
+        }
+        return props;
+    };
+    
+    // 查找组件工厂函数
+    const findComponentFactory = () => scope[compNameTrimmed] || window[compNameTrimmed] || (window.__rootScope && window.__rootScope[compNameTrimmed]);
+    
+    // 渲染组件
+    const renderComponent = (ComponentFactory) => {
+        // 清理旧实例
+        if (componentInstance) {
+            try {
+                if (typeof componentInstance.unmount === "function") componentInstance.unmount();
+            } catch (unmountError) {
+                console.warn(`[r-dom] 组件卸载失败:`, unmountError);
+            }
+            componentInstance = null;
+        }
+        
+        const props = getComponentProps();
+        
+        try {
+            // 支持多种调用方式
+            if (ComponentFactory.length >= 2) componentInstance = ComponentFactory(props, el);
+            else componentInstance = ComponentFactory({ props, target: el });
+            
+            // 验证组件实例
+            if (!componentInstance) new Error("组件工厂函数未返回有效实例");
+            _componentInstances.set(el, componentInstance);
+        } catch (error) {
+            console.error(`[r-dom] 组件 "${compNameTrimmed}" 渲染失败:`, error);
+        }
+    };
+    
+    // 组件挂载流程
+    const mountComponent = () => {
+        const ComponentFactory = findComponentFactory();
+        if (typeof ComponentFactory === "function") {
+            // 找到组件，停止重试并渲染
+            if (retryTimer) {
+                clearInterval(retryTimer);
+                retryTimer = null;
+            }
+            renderComponent(ComponentFactory);
+            return true;
+        }
+        return false;
+    };
+    
+    // 重试机制（带指数退避）
+    const startRetry = () => {
+        if (retryTimer) return;
+        retryTimer = setInterval(() => {
+            retryCount++;
+            if (mountComponent()) return; // 成功挂载
+            if (retryCount >= MAX_RETRY_COUNT) {
+                // 超时处理
+                clearInterval(retryTimer);
+                retryTimer = null;
+                console.error(`[r-dom] 组件 "${compNameTrimmed}" 注册超时（${MAX_RETRY_COUNT * RETRY_INTERVAL}ms）`);
+            }
+        }, RETRY_INTERVAL);
+    };
+    
+    // 依赖变化时的处理（防抖优化）
+    let pendingUpdate = null;
+    const handleDependencyChange = () => {
+        if (pendingUpdate) clearTimeout(pendingUpdate);
+        
+        pendingUpdate = setTimeout(() => {
+            // 重新检查组件是否可用
+            const ComponentFactory = findComponentFactory();
+            if (typeof ComponentFactory === "function") renderComponent(ComponentFactory);
+            else if (componentInstance) { // props变化但组件未重新注册，也触发更新
+                // 如果组件实例存在但工厂函数丢失，尝试重新创建
+                console.warn(`[r-dom] 组件工厂函数丢失，尝试重新挂载`);
+                startRetry();
+            }
+            pendingUpdate = null;
+        }, 16); // 约一帧的时间
+    };
+    
+    // 初始挂载
+    if (!mountComponent()) startRetry(); // 组件未就绪，启动重试机制
+    
+    
+    // 响应式依赖收集（优化版本）
+    const elDeps = _elDeps.get(el) || new Set();
+    const collectedDeps = new Set();
+    
+    // 收集props中的依赖
+    const props = getComponentProps();
+    Object.values(props).forEach(value => {
+        if (typeof value === "string" && value.includes("{{")) {
+            const vars = value.match(_VARIABLE_REGEX) || [];
+            vars.forEach(v => {
+                const rootVar = v.split(".")[0];
+                if (rootVar && !_ExpressionParser._globals.has(rootVar)) collectedDeps.add(rootVar);
+            });
+        }
+    });
+    
+    // 合并依赖并订阅
+    const allDeps = new Set([...elDeps, ...collectedDeps]);
+    allDeps.forEach(varName => _depsMap.get(scope)?.subscribe(handleDependencyChange, varName));
+    
+    // 清理逻辑（增强版本）
+    const cleanup = () => {
+        // 清理重试计时器
+        if (retryTimer) {
+            clearInterval(retryTimer);
+            retryTimer = null;
+        }
+        
+        // 清理更新计时器
+        if (pendingUpdate) {
+            clearTimeout(pendingUpdate);
+            pendingUpdate = null;
+        }
+        
+        // 卸载组件实例
+        if (componentInstance) {
+            try {
+                if (typeof componentInstance.unmount === "function") componentInstance.unmount();
+            } catch (error) {
+                console.warn(`[r-dom] 组件卸载异常:`, error);
+            }
+            componentInstance = null;
+        }
+        
+        // 清理实例映射
+        _componentInstances.delete(el);
+        el.__domProcessed = false;
         el.removeEventListener("beforeunload", cleanup);
     };
     
@@ -1532,7 +1702,7 @@ window.provide = (key, value = null) => {
  */
 window.dom = (compName, options) => {
     if (typeof compName !== "string" || !options || typeof options !== "object") throw new Error("dom() 需传入组件名称和配置对象");
-    const { template, style, script, props: propDefinitions, mountTo, styleIsolation = true } = options;
+    const { template, style, script, props: propDefinitions, mountTo, styleIsolation = true, registerAs } = options;
     if (!template) console.warn(`组件 "${compName}" 缺少 template`);
     
     // 生成唯一的组件ID
@@ -1550,7 +1720,7 @@ window.dom = (compName, options) => {
         _componentTemplates.set(compName, templateFragment);
     } else templateFragment = _componentTemplates.get(compName);
     
-    // 样式处理 - 修改为可配置
+    // 样式处理
     let styleElement = null;
     const processStyle = (isolationEnabled = styleIsolation) => {
         if (styleElement) {
@@ -1574,10 +1744,12 @@ window.dom = (compName, options) => {
     
     // 添加重置样式
     const addResetStyles = (scopeId) => {
+        // moderate 级别的重置样式
         const resetStyles = `
-            [data-${scopeId}] * { all: unset; box-sizing: border-box; }
+            [data-${scopeId}] {box-sizing: border-box;}
+            [data-${scopeId}] * {box-sizing: border-box;}
             [data-${scopeId}] div, [data-${scopeId}] article, [data-${scopeId}] section, [data-${scopeId}] header, [data-${scopeId}] footer, [data-${scopeId}] main, [data-${scopeId}] nav { display: block; }
-            [data-${scopeId}] span, [data-${scopeId}] a, [data-${scopeId}] strong, [data-${scopeId}] em { display: inline; }
+            [data-${scopeId}] span, [data-${scopeId}] a, [data-${scopeId}] strong, [data-${scopeId}] em, [data-${scopeId}] i, [data-${scopeId}] b { display: inline; }
             [data-${scopeId}] p { display: block; margin: 1em 0; line-height: 1.5; }
             [data-${scopeId}] h1 { display: block; font-size: 2em; font-weight: bold; margin: 0.67em 0; }
             [data-${scopeId}] h2 { display: block; font-size: 1.5em; font-weight: bold; margin: 0.83em 0; }
@@ -1586,22 +1758,33 @@ window.dom = (compName, options) => {
             [data-${scopeId}] h5 { display: block; font-size: 0.83em; font-weight: bold; margin: 1.67em 0; }
             [data-${scopeId}] h6 { display: block; font-size: 0.67em; font-weight: bold; margin: 2.33em 0; }
             [data-${scopeId}] button, [data-${scopeId}] input, [data-${scopeId}] select, [data-${scopeId}] textarea { display: inline-block; font-family: inherit; font-size: inherit; line-height: inherit; }
-            [data-${scopeId}] ul, [data-${scopeId}] ol { display: block; list-style-position: inside; margin: 1em 0; padding-left: 40px; }
+            [data-${scopeId}] ul, [data-${scopeId}] ol { display: block; list-style-position: outside; margin: 1em 0; padding-left: 40px; }
             [data-${scopeId}] li { display: list-item; }
             [data-${scopeId}] table { display: table; border-collapse: collapse; }
             [data-${scopeId}] tr { display: table-row; }
             [data-${scopeId}] td, [data-${scopeId}] th { display: table-cell; padding: 0.5em; border: 1px solid #ddd; }
             [data-${scopeId}] th { font-weight: bold; text-align: center; }
             [data-${scopeId}] img { display: inline-block; max-width: 100%; height: auto; }
-`;
+            [data-${scopeId}] a { color: inherit; text-decoration: none; }
+            [data-${scopeId}] a:hover { text-decoration: underline; }
+            [data-${scopeId}] code { font-family: monospace; background: #f5f5f5; padding: 0.2em 0.4em; border-radius: 3px; }
+            [data-${scopeId}] blockquote { margin: 1em 0; padding-left: 1em; border-left: 3px solid #ccc; font-style: italic; }
+        `;
         
+        // 创建样式元素
         const resetStyleElement = document.createElement("style");
         resetStyleElement.setAttribute("data-comp-reset", compName);
+        resetStyleElement.setAttribute("data-scope-id", scopeId);
+        resetStyleElement.setAttribute("data-reset-level", "moderate"); // 固定标记
         resetStyleElement.textContent = resetStyles;
+        
+        // 添加到文档头
         document.head.appendChild(resetStyleElement);
         
+        // 缓存管理
         if (!window.__componentResetStyles) window.__componentResetStyles = new Map();
-        window.__componentResetStyles.set(compId, resetStyleElement);
+        window.__componentResetStyles.set(scopeId, resetStyleElement);
+        return resetStyleElement;
     };
     
     // 清理重置样式
@@ -1699,7 +1882,7 @@ window.dom = (compName, options) => {
         return `${scopedSelectors} { ${declarations} }`;
     };
     
-    // DOM作用域添加函数 - 修改为可配置
+    // DOM作用域添加函数
     const addComponentScopeToDOM = (element, isolationEnabled = styleIsolation) => {
         if (element.nodeType === Node.ELEMENT_NODE) {
             // 根据隔离状态决定是否添加作用域属性
@@ -1715,7 +1898,7 @@ window.dom = (compName, options) => {
     const LIFECYCLE_HOOKS = ["mounted", "unmounted"];
     const NON_LIFECYCLE_METHODS = new Set(["setup", ...LIFECYCLE_HOOKS]);
     
-    // 组件工厂函数 - 修改为接受样式隔离参数
+    // 组件工厂函数
     const componentFactory = (props = {}, isolationOverride) => {
         const resolvedProps = Object.create(null);
         if (propDefinitions?.default) Object.assign(resolvedProps, propDefinitions.default);
@@ -1811,7 +1994,7 @@ window.dom = (compName, options) => {
         return { render };
     };
     
-    // 挂载函数 - 修改为接受样式隔离参数
+    // 挂载函数
     const mountComponent = (props, target, isolationOverride) => {
         const mountTarget = typeof target === "string" ? document.querySelector(target) : target;
         if (!mountTarget) {
@@ -1821,6 +2004,62 @@ window.dom = (compName, options) => {
         const { render } = componentFactory(props, isolationOverride);
         return render(mountTarget, isolationOverride);
     };
+    
+    // 自动注册逻辑
+    const autoRegisterToRoot = () => {
+        // 计算最终注册名
+        const calculateRegisterName = () => {
+            if (typeof registerAs === "string" && registerAs.trim()) return registerAs.trim();
+            if (typeof compName === "string" && compName.trim()) return compName.trim();
+            return `comp-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`; // 生成唯一组件名
+        };
+        
+        // 创建组件工厂函数
+        const createComponentFactory = (finalRegisterName, targetCompName) => {
+            return (...args) => {
+                let props = {};
+                let target = null;
+                let styleIsolation = undefined;
+                
+                // 参数解析逻辑
+                if (args.length === 1 && typeof args[0] === "object") ({ props = {}, target, styleIsolation } = args[0]);
+                else if (args.length >= 2) [props, target, styleIsolation] = args;
+                else {
+                    console.error(`组件 "${targetCompName}" 挂载失败：参数格式错误，期望对象或参数列表`);
+                    return null;
+                }
+                
+                if (!target) {
+                    console.error(`组件 "${targetCompName}" 挂载失败：缺少target参数`);
+                    return null;
+                }
+                
+                return mountComponent(props, target, styleIsolation);
+            };
+        };
+        
+        // 注册组件到根作用域
+        const registerToRootScope = (finalRegisterName, targetCompName) => {
+            const tryRegister = () => {
+                if (window.__rootScope) {
+                    // 避免重复注册
+                    if (window.__rootScope[finalRegisterName]) return void console.warn(`[dom] 组件名 "${finalRegisterName}" 已被占用，跳过注册`);
+                    window.__rootScope[finalRegisterName] = createComponentFactory(finalRegisterName, targetCompName);
+                } else setTimeout(tryRegister, 40); // 根作用域未就绪，延迟重试
+            };
+            
+            // 根据文档状态决定注册时机
+            if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", tryRegister);
+            else tryRegister();
+        };
+        
+        // 执行注册流程
+        const finalRegisterName = calculateRegisterName();
+        registerToRootScope(finalRegisterName, compName);
+    };
+    
+    // 执行自动注册
+    autoRegisterToRoot();
     
     // 支持多种调用方式
     if (mountTo) return mountComponent({}, mountTo);  // 如果定义了 mountTo，立即挂载
@@ -2005,251 +2244,4 @@ document.addEventListener("DOMContentLoaded", () => {
         _inlineScripts.length = 0;
     }, 0);
 });
-
-// 使用示例
-// <!DOCTYPE html>
-// <html lang="en">
-//     <head>
-//     <meta charset="UTF-8">
-//     <title>动态信息列表</title>
-// <script src="0.0.1.js"></script>
-// <style>
-//     hr {
-//     margin: 20px 0;
-// }
-//
-//     h3 {
-//     font-size: 30px;
-//     color: #4CAF50;
-// }
-// </style>
-// </head>
-//
-// <body>
-//     <div>
-//         <h1 r="title">Rex 0.0.1.js Hello World</h1>
-//     </div>
-//
-//     <div>
-//         <!-- r-if 用于条件渲染，如果需要计算表达式就变成执行JS代码，所有要加上.value, 不需要计算可以直接写count -->
-//         <span r-if="count.value % 2 === 0">{{ count }}</span>
-//
-//         <!-- r-click 用于点击事件, r-click里面的代码都是JS代码，所以要加上.value -->
-//         <button r-click="count.value++;">增加</button>
-//         <button r-click="count.value--;">减少</button>
-//         <button r-click="alert('当前计数：' + count.value)">弹窗</button>
-//     </div>
-//
-//     <hr/>
-//
-//     <!-- r-model 用于双向绑定数据 -->
-//     <div>
-//         <div r-cp="list" $data="info" $name="这是组件"></div>
-//         <label>名字：<input type="text" r-model="name"/><br/></label>
-//         <label>年龄：<input type="number" r-model="age" min="1"/><br/></label>
-//         <button r-click="info[info.length]={id: info.length, name: name.value, age: age.value, type: 1}">新增信息</button>
-//     </div>
-//
-//     <hr/>
-//
-//     <!-- r-for 用于循环渲染索引从1开始，count是循环次数 -->
-//     <div>
-//         <a>这是数字渲染：</a>
-//         <div r-for="count">
-//             <p r-for="index" index="j">
-//                 {{ j }} * {{ index }} = {{ index * j }} &nbsp;&nbsp;
-//             </p>
-//         </div>
-//     </div>
-//
-//     <hr/>
-//
-//     <!-- r-api 自动请求数据并渲染，list是获取的数据中需要渲染的列表，refr是绑定刷新按钮，arr是自行渲染数据，aw是自行手动请求数据会返回一个布尔值$aw用于判断是否请求了数据 -->
-//     <div>
-//         <div r-api="http://localhost:63342/rex/data.json" list="data" refr="#xc" arr="x" aw>
-//             {{ _aw }} GET 请求
-//             <div r-arr="x" r-if="_aw">
-//                 序号：{{ value.id }} __ {{ index }}
-//                 名字：{{ value.name }} __
-//                 年龄：{{ value.age }} __
-//             </div>
-//             <br/>
-//         </div>
-//
-//         <!-- 绑定refr="#xc"按钮刷新 -->
-//         <button id="xc">刷新</button>
-//     </div>
-//
-//     <hr/>
-//
-//     <!-- 通过ID使用页面级组件，用自己生命周期，定义的数据是私用数据 -->
-//     <div id="my"></div>
-//
-//     <hr/>
-//
-//     <!-- 路由 -->
-//     <div>
-//         <!-- 注册路由 -->
-//         <div r-page="home">
-//             <div r-cp="list" $data="info" $name="这是组件"></div>
-//         </div>
-//
-//         <div r-page="about">
-//             <h1>关于</h1>
-//         </div>
-//
-//         <div r-page="cp">
-//             <div id="user"></div>
-//         </div>
-//
-//         <!-- 使用路由链接 -->
-//         <button r-route="home">首页</button>
-//         <button r-route="about">关于</button>
-//         <button r-route="cp">组件</button>
-//
-//         <!-- 内容容器 -->
-//         <div id="view"></div>
-//     </div>
-//
-//     <!-- <template r-cp> 用于定义普通组件 -->
-//     <template r-cp="list">
-//         <h3>{{ name }}</h3>
-//         <div r-arr="data" id="info">
-//             <div r-if="value.type">
-//                 <span>大家好, 我叫{{ value.name }}, 今年{{ value.age }}岁了。</span>
-//                 <button r-click="info[index] = {};">删除</button>
-//                 <a href="#">{{ index }}</a>
-//             </div>
-//         </div>
-//
-//         <style>
-//             #info {
-//             display: block;
-//             margin: 10px 0;
-//             padding: 10px;
-//             border: 1px solid #ccc;
-//             border-radius: 5px;
-//             background-color: #f5f5f5;
-//         }
-//         </style>
-//     </template>
-// </body>
-//
-// <script>
-//     const UserComponent = dom("user", {
-//     template: `
-//         <div class="card">
-//             <h1 id="cp-user">页面级别的组件</h1>
-//             <h3 r="name">名字：{{ username }}</h3>
-//             <p ref="age">年龄: {{ age }}</p>
-//             <p>性别: {{ $props.gender }}</p>
-//             <button r-click="setInfo()">自增</button>
-//         </div>
-//     `,
-//
-//     style: `
-// 	        .card {
-// 	            border: 1px solid #ccc;
-// 	            padding: 20px;
-// 	            border-radius: 8px;
-// 	            max-width: 300px;
-// 	        }
-//
-// 	        h3 {
-// 	            color: #333;
-// 	        }
-//
-// 	        button {
-// 	            background-color: #4CAF50;
-// 	            color: white;
-// 	            border: none;
-// 	            padding: 10px 15px;
-// 	            border-radius: 5px;
-// 	            cursor: pointer;
-// 	       }
-//         `,
-//
-//     script: ({ $props, $refs }, { ref }) => {
-//     const setup = () => {
-//     const age = ref(20);
-//     const username = ref("fjh");
-//
-//     const setInfo = () => {
-//     age.value++;
-//     $props.gender.value = "x" + age.value;
-//     console.log($r.name, $refs.age);
-// };
-//
-//     return { age, username, setInfo };
-// };
-//
-//     function mounted() {
-//     console.log(`组件 DOM 渲染完成后调用${this.age.value}`);
-//     $refs.age;
-// }
-//
-//     function unmounted() {
-//     console.log(`组件 DOM 销毁时调用`);
-// }
-//
-//     return { setup, mounted, unmounted };
-// }
-//
-//     // // 启用样式隔离，默认启用
-//     // styleIsolation: true, // 默认启用
-//
-//     // 自动挂载到指定元素，手动 UserComponent({}, "#user");
-//     // mountTo: "#user",
-// });
-//
-// </script>
-//
-// <script>
-//     // 跳转路由
-//     router.nav("cp");
-//
-//     // 定义响应式对象数据
-//     const info = reactive([
-//     { id: 0, name: "张三", age: 19, type: 1 },
-//     { id: 1, name: "李四", age: 20, type: 1 },
-//     { id: 2, name: "王五", age: 21, type: 0 }
-//     ]);
-//
-//     // 定义响应式数据
-//     const count = ref(1);
-//     const name = ref("x");
-//     const age = ref(0);
-//
-//     // provide是专门为双向数据绑定设计的，注册用于r-model的双向绑定数据, 如果数据不用r-model可以不用注册
-//     provide({ age, name });
-//
-//     // 模拟异步数据
-//     setTimeout(() => info[0] = { ...info[0], name: "666." }, 1000);
-//
-//     // 在路由创建组件需要最后渲染
-//     const routerCP = () => {
-//     const user = UserComponent({ gender: ref("男") }, "#user", true);
-//     setTimeout(() => user.unmount(), 10000);
-//     console.log(user.getRootElement());
-// };
-//
-//     // 创建页面级组件
-//     UserComponent({ gender: ref("男") }, "#my", true);
-// </script>
-//
-// <script src>
-//     // 等待DOM加载完成
-//     routerCP();
-//     $r.title.style.color = "red";
-// </script>
-//
-// <script>
-//     // 可以在标签加上src或使用onMounted
-//     onMounted(() => {
-//     console.log("Dom 加载完成");
-// })
-// </script>
-//
-// </html>
-//
 
