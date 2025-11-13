@@ -36,41 +36,48 @@ const KEY_MAP = {
  */
 const _BatchUpdater = {
     _queue: new Set(),    // 更新函数队列
-    _updating: false,     // 是否正在更新中
+    _isUpdating: false,   // 是否正在执行更新
     
     /**
      * 添加更新函数到队列
      * @param {Function} fn - 需要执行的更新函数
+     * @returns {void}
      */
     add(fn) {
-        if (typeof fn !== "function") return;
-        this._queue.add(fn);
-        // 当添加第一个函数时，触发下一帧执行所有更新
-        if (!this._updating) {
-            this._updating = true;
-            requestAnimationFrame(() => this._execute());
-        }
+        if (typeof fn !== "function") return; // 严格类型校验，避免无效函数入队
+        this._queue.add(fn); // 入队
+        if (!this._isUpdating) this._scheduleUpdate(); // 调度执行
     },
     
     /**
-     * 执行所有队列中的更新函数
-     * 关键：创建队列副本执行，避免执行中新增函数干扰当前批次
+     * 调度更新执行
+     * 原理：requestAnimationFrame 确保更新在浏览器下一帧统一执行，减少DOM操作冲突
      */
-    _execute() {
-        // 创建队列副本防止执行过程中被修改
+    _scheduleUpdate() {
+        this._isUpdating = true;
+        requestAnimationFrame(() => this._executeQueue()); // 下一帧执行
+    },
+    
+    /**
+     * 执行队列中的所有更新函数
+     * 核心：副本执行 + 提前清空队列 + 错误隔离
+     */
+    _executeQueue() {
+        // 创建队列副本：避免执行过程中新增函数干扰当前批次
         const queueCopy = new Set(this._queue);
-        this._queue.clear();  // 清空原队列，准备接收新的更新
+        this._queue.clear(); // 提前清空原队列：允许接收新地更新函数，避免后续更新阻塞（无等待）
         
-        // 执行每个更新函数
-        queueCopy.forEach(fn => {
+        // 遍历执行：错误隔离 + 兼容 WeakSet 自动回收
+        queueCopy.forEach((fn) => {
             try {
-                fn();
+                fn.call(null);
             } catch (e) {
-                console.error("[BatchUpdater] 更新错误:", e);
+                console.error("[_BatchUpdater] 更新执行失败：", e, "关联函数：", fn);
             }
         });
         
-        this._updating = false;  // 标记更新结束，允许新地更新批次
+        // 标记执行结束：允许新地更新批次触发
+        this._isUpdating = false;
     }
 };
 
@@ -82,35 +89,30 @@ const _BatchUpdater = {
  */
 class _Dependency {
     constructor() {
-        this.subscribers = new Set();       // 订阅者集合
-        this.varSubs = new Map();           // 按变量分组的订阅
-    };
+        this.subscribers = new Set();
+        this.varSubs = new Map();
+    }
     
     /**
      * 添加订阅者
-     * @param {Function} fn - 订阅函数
-     * @param {string|null} variable - 变量名
      */
     subscribe(fn, variable = null) {
         if (typeof fn !== "function") return;
-        this.subscribers.add(fn);  // 加入全局订阅者集合
+        this.subscribers.add(fn);
         if (variable) {
-            // 按变量分组存储（用于后续精确通知）
-            const varSubs = this.varSubs.get(variable) || new Set();
-            varSubs.add(fn);
-            this.varSubs.set(variable, varSubs);
+            if (!this.varSubs.has(variable)) this.varSubs.set(variable, new Set());
+            this.varSubs.get(variable).add(fn);
         }
-    };
+    }
     
     /**
-     * 通知订阅者更新
-     * @param {string|null} variable - 特定变量名
-     * 通过variable参数实现精确更新，避免无关订阅者执行
+     * 通知订阅者
      */
     notify(variable = null) {
-        const targets = variable && this.varSubs.has(variable) ? this.varSubs.get(variable) : this.subscribers; // 确定要通知的目标订阅者集合
-        targets.forEach(fn => _BatchUpdater.add(fn)); // 借助BatchUpdater批量执行更新，减少DOM操作次数
-    };
+        const targets = variable && this.varSubs.has(variable) ? this.varSubs.get(variable) : this.subscribers;
+        if (targets.size === 0) return; // 快速返回空集合
+        for (const fn of targets) _BatchUpdater.add(fn); // 使用迭代器直接遍历
+    }
 }
 
 
@@ -204,7 +206,6 @@ const _createUpdateFn = (el, scope = {}) => {
     
     // 仅在函数创建时遍历一次属性
     if (el.attributes) {
-        // 用for循环替代Array.from+forEach：减少数组转换和函数调用开销
         for (let i = 0; i < el.attributes.length; i++) {
             const attr = el.attributes[i];
             const attrName = attr.name;
@@ -215,7 +216,7 @@ const _createUpdateFn = (el, scope = {}) => {
         }
     }
     
-    // 核心更新函数：复用attrMap，减少DOM操作和重复判断
+    // 复用attrMap，减少DOM操作和重复判断
     const updateFn = () => {
         // 清空旧依赖：准备重新收集当前更新的依赖
         deps.clear();
@@ -253,7 +254,7 @@ const _createUpdateFn = (el, scope = {}) => {
         el.removeEventListener("beforeunload", cleanup);
     };
     
-    // 避免重复绑定清理事件（防止内存泄漏）
+    // 避免重复绑定清理事件
     if (!el["__updateCleanupBound"]) {
         el.addEventListener("beforeunload", cleanup);
         el.__updateCleanupBound = true;
@@ -1195,25 +1196,63 @@ _registerDirective("r-route", (el, pathExpr, scope, deps) => {
 
 
 // r 指令
-_registerDirective("r", (el, refName) => {
-    if (typeof refName !== "string" || refName.trim() === "") {
-        console.warn("[ref] 指令值不能为空，请提供一个引用名称，如 r=\"age\"");
-        return;
-    }
-    
-    // 确保 $r 全局对象存在
+_registerDirective("r", (el, refExpr, scope, deps) => {
+    if (typeof refExpr !== "string" || !refExpr.trim()) return;
     if (!window.$r) window.$r = {};
+    let currentRefName = null;
+    let isDynamic = false; // 标记是否为动态引用
     
-    // 将DOM元素存储到 $r 对象中
-    window.$r[refName] = el;
-    
-    // 添加清理逻辑，当元素被销毁时从 $r 中移除
-    const cleanup = () => {
-        if (window.$r && window.$r[refName] === el) delete window.$r[refName];
-        el.removeEventListener("beforeunload", cleanup);
+    // 解析引用名：支持静态字符串和动态插值
+    const getRefName = () => {
+        let name = refExpr.trim();
+        
+        // 检测是否包含插值表达式
+        if (_INTERPOLATION_REGEX.test(name)) {
+            isDynamic = true;
+            return _ExpressionParser.parseText(name, scope, deps)?.toString().trim() || null; // 解析动态插值
+        } else {
+            isDynamic = false;
+            return name; // 静态字符串直接使用
+        }
     };
     
-    el.addEventListener("beforeunload", cleanup);
+    // 更新引用
+    const updateRef = () => {
+        const newName = getRefName();
+        if (!newName) return;
+        
+        if (newName !== currentRefName) {
+            // 清理旧引用
+            if (currentRefName && window.$r[currentRefName] === el) delete window.$r[currentRefName];
+            
+            // 设置新引用
+            currentRefName = newName;
+            window.$r[currentRefName] = el;
+        }
+    };
+    
+    // 初始设置
+    currentRefName = getRefName();
+    if (currentRefName) window.$r[currentRefName] = el;
+    
+    // 只有动态引用才需要响应式更新
+    if (isDynamic) {
+        // 设置响应式更新
+        _activeFns.push(updateRef);
+        try {
+            getRefName(); // 触发依赖收集
+        } finally {
+            _activeFns.pop();
+        }
+        
+        // 收集依赖
+        const dependencies = new Set();
+        _ExpressionParser.parseText(refExpr, scope, dependencies);
+        dependencies.forEach(varName => _depsMap.get(scope)?.subscribe(updateRef, varName)); // 订阅变化
+    }
+    
+    // 清理
+    el.addEventListener("beforeunload", () => (currentRefName && window.$r[currentRefName] === el) && delete window.$r[currentRefName]);
 });
 
 
@@ -1573,97 +1612,128 @@ window.ref = (initialValue) => {
  * 原理：通过Proxy拦截对象的get/set/delete等操作，实现依赖收集和通知
  */
 window.reactive = (target) => {
-    // 前置校验：过滤非对象/数组类型（避免对基础类型无效代理）
-    if (typeof target !== "object" || target === null || target instanceof Date || target instanceof RegExp) {
-        console.warn(`[reactive] 仅支持对象/数组类型，当前类型: ${typeof target}`);
+    // 过滤非对象/数组类型（基础类型、null、日期、正则、函数等）
+    if (typeof target !== "object" || target === null || target instanceof Date || target instanceof RegExp || target instanceof Function || target instanceof Map || target instanceof Set) {
+        console.warn(`[reactive] 仅支持纯对象/数组类型，当前类型: ${typeof target} (${target?.constructor?.name})`);
         return target;
     }
     
-    // 避免重复代理：优先从原始对象读取标记（解决代理对象二次传入问题）
-    const rawTarget = target.__raw || target; // __raw 存储原始对象，避免代理嵌套
-    if (rawTarget.__isReactive) return target; // 若原始对象已代理，直接返回当前对象（可能是代理或原始对象）
+    // 当前对象已是代理对象（直接返回，无需二次代理）
+    if (target.__isReactiveProxy) return target;
+    if (target.__isReactive) return _depsMap.get(target).__proxy || target;
     
-    // 初始化依赖与标记：在原始对象上标记，避免代理对象重复存储
+    // 原始对象（未被代理过）：存储原始引用，避免嵌套代理时丢失
+    const rawTarget = target;
+    
     const dep = new _Dependency();
-    _depsMap.set(rawTarget, dep);
-    Object.defineProperty(rawTarget, "__isReactive", { value: true, enumerable: false });
-    Object.defineProperty(rawTarget, "__raw", { value: rawTarget, enumerable: false }); // 存储原始对象引用
+    _depsMap.set(rawTarget, dep); // 存储：原始对象 → 依赖实例（用于后续嵌套访问时复用）
     
-    // 数组特殊处理：方法重写逻辑，减少原型链操作
+    // 原始对象标记（不可枚举，避免污染用户数据）
+    Object.defineProperties(rawTarget, {
+        __isReactive: { value: true, enumerable: false, configurable: false }, // 标记已被代理
+        __raw: { value: rawTarget, enumerable: false, configurable: false }    // 原始对象自引用
+    });
+    
     const arrayMethods = ["push", "pop", "shift", "unshift", "splice", "sort", "reverse"];
     const optimizeArray = (arr) => {
-        // 创建数组方法的代理对象，避免直接修改原始数组的方法（减少原型污染风险）
-        const arrayProxy = Object.create(Array.prototype);
+        // 创建数组方法代理（基于原型链，不污染全局Array）
+        const arrayProxyProto = Object.create(Array.prototype);
         arrayMethods.forEach(method => {
-            arrayProxy[method] = function (...args) {
+            arrayProxyProto[method] = function (...args) {
+                // 临时关闭依赖通知：避免方法内部多次触发更新
+                const isNotificationDisabled = dep._notificationDisabled;
+                dep._notificationDisabled = true;
                 const originalResult = Array.prototype[method].apply(this, args);
                 
-                // 特殊处理 splice/push/unshift：新增元素若为对象，自动转为响应式
-                if (["splice", "push", "unshift"].includes(method)) {
-                    const newItems = method === "splice" ? args.slice(2) : args;
-                    newItems.forEach(item => (typeof item === "object" && item !== null && !item.__isReactive) && reactive(item));
+                try {
+                    // 新增元素自动转为响应式（splice/push/unshift）
+                    if (["splice", "push", "unshift"].includes(method)) {
+                        const newItems = method === "splice" ? args.slice(2) : args;
+                        newItems.forEach(item => (typeof item === "object" && item !== null && !item.__isReactive) && reactive(item));
+                    }
+                    
+                    // 方法执行完成后，统一触发一次更新（减少通知次数）
+                    dep._notificationDisabled = isNotificationDisabled;
+                    if (!dep._notificationDisabled) dep.notify("array:mutate"); // 数组变更标记，便于精准订阅
+                    
+                    return originalResult;
+                } catch (e) {
+                    console.error(`[reactive] 数组方法 ${method} 执行失败:`, e);
+                    dep._notificationDisabled = isNotificationDisabled;
+                    return originalResult;
                 }
-                
-                // 数组变更通知依赖（统一触发，无需区分索引）
-                dep.notify();
-                return originalResult;
             };
         });
-        // 覆盖数组的 __proto__，仅影响当前数组实例（不污染全局 Array 原型）
-        Object.setPrototypeOf(arr, arrayProxy);
+        
+        // 覆盖数组实例的原型（仅影响当前数组，不污染全局）
+        Object.setPrototypeOf(arr, arrayProxyProto);
     };
     
-    // 若为数组，执行逻辑
-    if (Array.isArray(rawTarget)) optimizeArray(rawTarget);
+    // 数组类型特殊处理
+    if (Array.isArray(rawTarget)) {
+        optimizeArray(rawTarget);
+        // 数组元素初始化：已存在的嵌套对象转为响应式
+        rawTarget.forEach((item, index) => (typeof item === "object" && item !== null && !item.__isReactive) && (rawTarget[index] = reactive(item)));
+    }
     
-    // 创建 Proxy 代理 get/set 逻辑，精细控制依赖收集与更新
-    return new Proxy(rawTarget, {
+    const proxy = new Proxy(rawTarget, {
         get(targetObj, prop, receiver) {
-            // 过滤内置属性：避免对 __proto__、__isReactive 等内置属性收集依赖
-            if (prop === "__proto__" || prop === "__isReactive" || prop === "__raw") return Reflect.get(targetObj, prop, receiver);
+            // 内置属性直接返回（避免拦截__proto__、__isReactive等）
+            if (prop === "__proto__" || prop === "__isReactive" || prop === "__raw" || prop === "__isReactiveProxy") return Reflect.get(targetObj, prop, receiver);
             
-            // 依赖收集：仅在有活跃更新函数时执行，且绑定到原始对象的 dep
             if (_activeFns.length > 0) {
                 const activeFn = _activeFns[_activeFns.length - 1];
-                // 数组索引依赖：单独收集索引对应的依赖（支持精准更新）
-                if (Array.isArray(targetObj) && /^\d+$/.test(prop)) dep.subscribe(activeFn, `index:${prop}`); // 索引依赖标记：index:0、index:1 等
-                else dep.subscribe(activeFn, prop); // 普通属性依赖：按属性名标记
+                // 数组索引：标记为 index:0、index:1 等，支持精准更新
+                if (Array.isArray(targetObj) && /^\d+$/.test(prop)) dep.subscribe(activeFn, `index:${prop}`);
+                else dep.subscribe(activeFn, prop); // 普通属性：按属性名订阅
             }
             
+            // 获取原始值
             const value = Reflect.get(targetObj, prop, receiver);
             
-            // 递归代理：对嵌套对象延迟代理（访问时才代理，减少初始代理开销）
+            // 避免初始化时递归代理所有嵌套对象，提升性能
             if (typeof value === "object" && value !== null && !value.__isReactive) return reactive(value);
             return value;
         },
         
         set(targetObj, prop, value, receiver) {
-            // 过滤内置属性：禁止修改 __isReactive、__raw 等标记
-            if (prop === "__isReactive" || prop === "__raw") {
+            // 禁止修改内置标记
+            if (prop === "__isReactive" || prop === "__raw" || prop === "__isReactiveProxy") {
                 console.warn(`[reactive] 禁止修改内置属性: ${prop}`);
                 return true;
             }
             
             const oldValue = Reflect.get(targetObj, prop, receiver);
             
-            // 避免无意义更新：值未变化或新旧值均为 NaN 时跳过
+            // 新旧值严格相等
             if (oldValue === value || (Number.isNaN(oldValue) && Number.isNaN(value))) return true;
             
+            // 数组长度修改：避免与数组方法重复触发（如push已修改length）
+            if (Array.isArray(targetObj) && prop === "length" && typeof value === "number") {
+                const oldLength = targetObj.length;
+                if (value === oldLength) return true;
+                // 长度缩小：删除的索引对应的依赖需要通知
+                if (value < oldLength) {
+                    for (let i = value; i < oldLength; i++) dep.notify(`index:${i}`);
+                }
+            }
             
-            // 新值为对象时，先转为响应式（确保嵌套对象也能响应）
+            // 新值响应式处理
             const reactiveValue = typeof value === "object" && value !== null ? reactive(value) : value;
             const setResult = Reflect.set(targetObj, prop, reactiveValue, receiver);
             
-            // 精准通知依赖：按属性名/索引触发对应订阅者，避免全量更新
-            if (Array.isArray(targetObj) && /^\d+$/.test(prop)) dep.notify(`index:${prop}`); // 仅通知该索引的订阅者
-            else dep.notify(prop); // 仅通知该属性的订阅者
+            // 精准通知依赖
+            if (!dep._notificationDisabled) {
+                if (Array.isArray(targetObj) && /^\d+$/.test(prop)) dep.notify(`index:${prop}`); // 数组索引更新
+                else dep.notify(prop); // 普通属性更新
+            }
             
             return setResult;
         },
         
         deleteProperty(targetObj, prop) {
-            // 过滤内置属性：禁止删除 __isReactive、__raw 等标记
-            if (prop === "__isReactive" || prop === "__raw") {
+            // 禁止删除内置标记
+            if (prop === "__isReactive" || prop === "__raw" || prop === "__isReactiveProxy") {
                 console.warn(`[reactive] 禁止删除内置属性: ${prop}`);
                 return false;
             }
@@ -1671,11 +1741,22 @@ window.reactive = (target) => {
             const hadProp = Reflect.has(targetObj, prop);
             const deleteResult = Reflect.deleteProperty(targetObj, prop);
             
-            // 仅在属性存在且删除成功时，精准通知依赖
-            if (hadProp && deleteResult) dep.notify(prop);
+            // 仅在属性存在且删除成功时通知
+            if (hadProp && deleteResult && !dep._notificationDisabled) {
+                if (Array.isArray(targetObj) && /^\d+$/.test(prop)) dep.notify(`index:${prop}`); // 数组索引删除
+                else dep.notify(prop); // 普通属性删除
+            }
+            
             return deleteResult;
         }
     });
+    
+    // 标记当前是代理对象（不可枚举）
+    Object.defineProperty(proxy, "__isReactiveProxy", { value: true, enumerable: false, configurable: false });
+    dep.__proxy = proxy; // 原始对象存储代理引用（便于重复代理检测时直接返回）
+    
+    // 返回代理对象
+    return proxy;
 };
 
 
@@ -1704,6 +1785,7 @@ window.dom = (compName, options) => {
     if (typeof compName !== "string" || !options || typeof options !== "object") throw new Error("dom() 需传入组件名称和配置对象");
     const { template, style, script, props: propDefinitions, mountTo, styleIsolation = true, registerAs } = options;
     if (!template) console.warn(`组件 "${compName}" 缺少 template`);
+    if (!window.__componentResetCache) window.__componentResetCache = new Set();
     
     // 生成唯一的组件ID
     const compId = `comp-${compName}-${Math.random().toString(36).substring(2, 9)}`;
@@ -1744,6 +1826,10 @@ window.dom = (compName, options) => {
     
     // 添加重置样式
     const addResetStyles = (scopeId) => {
+        // 检查该组件是否已添加过重置样式
+        if (window.__componentResetCache.has(compName)) return null; // 已添加过则直接返回
+        window.__componentResetCache.add(compName); // 标记为已添加
+        
         // moderate 级别的重置样式
         const resetStyles = `
             [data-${scopeId}] {box-sizing: border-box;}
@@ -1789,17 +1875,14 @@ window.dom = (compName, options) => {
     
     // 清理重置样式
     const cleanupResetStyles = (compId) => {
-        if (window.__componentResetStyles && window.__componentResetStyles.has(compId)) {
-            const styleElement = window.__componentResetStyles.get(compId);
-            styleElement.remove();
-            window.__componentResetStyles.delete(compId);
-        }
+        if (window.__componentResetStyles && window.__componentResetStyles.has(compId)) window.__componentResetStyles.delete(compId);
     };
     
     // CSS作用域实现
     const addStyleScopeReliable = (css, scopeId) => {
-        const cleanCss = css.replace(/}}/g, "}").replace(/\s+/g, " ").trim();
-        let result = "";
+        // 先移除CSS注释（避免注释内的花括号干扰解析）
+        const cleanCss = css.replace(/\/\*[\s\S]*?\*\//g, "").replace(/}}/g, "}").replace(/\s+/g, " ").trim();
+        const result = []; // 用数组拼接替代字符串累加，提升性能
         let i = 0;
         const len = cleanCss.length;
         
@@ -1808,21 +1891,18 @@ window.dom = (compName, options) => {
                 const atRuleEnd = findMatchingBrace(cleanCss, i);
                 if (atRuleEnd === -1) break;
                 const atRule = cleanCss.substring(i, atRuleEnd + 1);
-                result += addStyleScopeToAtRule(atRule, scopeId);
+                result.push(addStyleScopeToAtRule(atRule, scopeId));
                 i = atRuleEnd + 1;
-                continue;
+            } else {
+                const ruleEnd = cleanCss.indexOf("}", i);
+                if (ruleEnd === -1) break;
+                const rule = cleanCss.substring(i, ruleEnd + 1);
+                result.push(addStyleScopeToRule(rule, scopeId));
+                i = ruleEnd + 1;
             }
-            
-            const ruleEnd = cleanCss.indexOf("}", i);
-            if (ruleEnd === -1) break;
-            
-            const rule = cleanCss.substring(i, ruleEnd + 1);
-            const scopedRule = addStyleScopeToRule(rule, scopeId);
-            result += scopedRule;
-            i = ruleEnd + 1;
         }
         
-        return result;
+        return result.join(""); // 数组拼接比字符串+=更高效
     };
     
     // 找到匹配的大括号
@@ -2117,41 +2197,11 @@ document.addEventListener("DOMContentLoaded", () => {
         tplEl.style.display = "none";
     });
     
-    // 统一的引用注册函数
-    const registerRef = (el) => {
-        // 如果元素已经通过 r 指令注册过，则跳过，避免覆盖
-        if (el.hasAttribute("r")) return;
-        
-        const id = el.id;
-        if (id) {
-            if (!window.$r) window.$r = {};
-            window.$r[id] = el; // 将DOM元素存储到 $r 对象中，id 作为键
-            
-            // 添加清理逻辑
-            const cleanup = () => {
-                if (window.$r && window.$r[id] === el) delete window.$r[id];
-                el.removeEventListener("beforeunload", cleanup);
-            };
-            el.addEventListener("beforeunload", cleanup);
-        }
-    };
+    // 获取应用根元素
+    const AppEl = document.querySelector("[r-app]");
+    const appRoot = AppEl || document.body; // 应用根元素，用于响应式处理
     
-    // 初始化时扫描body下所有带id的元素
-    const initAllRefs = () => {
-        // 查找body下所有带 id 的元素
-        const allElementsWithId = document.body.querySelectorAll("[id]");
-        allElementsWithId.forEach(el => registerRef(el));
-    };
-    
-    // 获取应用根元素并判断是否需要扫描
-    let shouldScanForRefs = false; // 是否需要扫描引用的标志
-    const rAppEl = document.querySelector("[r-app]");
-    const appRoot = rAppEl || document.body; // 应用根元素，用于响应式处理
-    
-    // 如果r-app元素存在且其值不为空，则设置扫描标志
-    if (rAppEl && rAppEl.getAttribute("r-app").trim() === "id") shouldScanForRefs = true;
-    
-    // 创建根作用域（整个应用的响应式数据容器）
+    // 创建根作用域
     const rootScope = reactive({});
     window.__rootScope = rootScope; // 暴露根作用域用于全局访问
     
@@ -2159,60 +2209,33 @@ document.addEventListener("DOMContentLoaded", () => {
     _pendingProviders.forEach(([key, value]) => rootScope[key] = value);
     _pendingProviders.length = 0; // 清空队列，防止重复处理
     
-    // 初始处理根元素（递归处理所有子元素，建立响应式关联）
+    // 初始处理根元素
     _processElement(appRoot, rootScope);
-    
-    // 根据标志决定是否进行初始化注册
-    if (shouldScanForRefs) initAllRefs();
     
     // 设置MutationObserver监听DOM变化
     const observer = new MutationObserver(mutations => {
-        const toProcess = new Set(); // 待处理的元素集合
-        const toRegisterRef = new Set(); // 待注册引用的元素集合
+        const toProcess = new Set(); // 指令处理集合
         
         mutations.forEach(mutation => {
             // 处理新增节点
             mutation.addedNodes.forEach(node => {
-                if (node.nodeType === Node.ELEMENT_NODE) {
-                    toProcess.add(node); // 新增元素需要处理指令
-                    
-                    // 根据标志决定是否注册引用
-                    if (shouldScanForRefs) {
-                        toRegisterRef.add(node); // 检查自身
-                        
-                        // 如果新增的是一个容器，其内部可能也有带id的元素
-                        if (node.querySelectorAll) {
-                            const childElementsWithId = node.querySelectorAll("[id]");
-                            childElementsWithId.forEach(el => toRegisterRef.add(el));
-                        }
-                    }
-                } else if (node.nodeType === Node.TEXT_NODE && _INTERPOLATION_REGEX.test(node.textContent)) (node.parentNode) && toProcess.add(node.parentNode);
+                if (node.nodeType === Node.ELEMENT_NODE) toProcess.add(node);
+                else if (node.nodeType === Node.TEXT_NODE && _INTERPOLATION_REGEX.test(node.textContent)) if (node.parentNode) toProcess.add(node.parentNode);
             });
             
             // 处理指令属性变更
             if (mutation.type === "attributes") {
                 const target = mutation.target;
-                if (_directives.has(mutation.attributeName)) toProcess.add(target); // 属性变化的元素需要重新处理指令
-                
-                // 根据标志决定是否处理id变化
-                if (shouldScanForRefs && mutation.attributeName === "id") toRegisterRef.add(target); // id变化的元素需要重新注册引用
+                if (_directives.has(mutation.attributeName)) toProcess.add(target);
             }
         });
         
         // 批量处理变化的元素
-        _BatchUpdater.add(() => {
-            toProcess.forEach(el => _processElement(el, rootScope));
-            toRegisterRef.forEach(el => registerRef(el));
-        });
+        _BatchUpdater.add(() => toProcess.forEach(el => _processElement(el, rootScope)));
     });
     
     // 开始观察DOM变化
-    observer.observe(appRoot, {
-        childList: true, // 观察子节点的添加/删除
-        subtree: true, // 观察所有后代节点
-        attributes: true, // 观察属性变化
-        attributeFilter: [...Array.from(_directives.keys()), "id"] // 观察指令属性和 id
-    });
+    observer.observe(appRoot, { childList: true, subtree: true, attributes: true, attributeFilter: Array.from(_directives.keys()) });
     
     // 初始化路由
     _Router.init();
@@ -2244,4 +2267,3 @@ document.addEventListener("DOMContentLoaded", () => {
         _inlineScripts.length = 0;
     }, 0);
 });
-

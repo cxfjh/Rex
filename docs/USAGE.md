@@ -360,11 +360,10 @@ router.nav("home");
 
 使用`r`指令获取DOM元素：
 ```html
-<!-- 定义引用, 给r-app添加id属性，会直接解析id的名字作为引用 -->
-<body r-app="id">
+<!-- 定义引用 -->
+<body>
     <div r="container">内容容器</div>
-    <input type="text" r="usernameInput"> 
-    <div id="div"></div>
+    <input type="text" r="usernameInput">
 </body>
 
 <!-- 初始阶段不能立即访问 -->
@@ -373,7 +372,6 @@ router.nav("home");
   onMounted(() => {
     console.log($r.container); // 获取DOM元素
     $r.usernameInput.value = "默认值";
-    $r.div.innerHTML = "内容";
   });
 </script>
 
@@ -381,7 +379,6 @@ router.nav("home");
 <script src>
     console.log($r.container); // 获取DOM元素
     $r.usernameInput.value = "默认值";
-    $r.div.innerHTML = "内容";
 </script>
 ```
 
