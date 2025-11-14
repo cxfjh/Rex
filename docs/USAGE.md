@@ -360,14 +360,16 @@ router.nav("home");
 
 使用`r`指令获取DOM元素：
 ```html
-<!-- 定义引用 -->
+<!-- 定义引用，使用响应式数据需要加 {{  }} -->
 <body>
-    <div r="container">内容容器</div>
+    <div r="{{name}}">内容容器</div>
     <input type="text" r="usernameInput">
 </body>
 
 <!-- 初始阶段不能立即访问 -->
 <script>
+   const name = ref("container");
+   
   // 在初始化访问引用
   onMounted(() => {
     console.log($r.container); // 获取DOM元素
