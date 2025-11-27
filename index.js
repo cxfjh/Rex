@@ -1433,14 +1433,15 @@ _registerDirective("r-dom", (el, compName, scope, deps) => {
 // 路由管理器
 const _Router = {
     routes: new Map(),
-    currentPath: "",
-    pageContainers: new Map(), // 存储所有页面的容器元素
-    originalPageElements: new Map(), // 存储原始页面元素的HTML内容
+    currentPaths: new Map(),
+    pageContainers: new Map(),
+    originalPageElements: new Map(),
+    routeTargets: new Map(),
     
     // 添加路由
-    add(path, handler) {
+    add(path, handler, target = "view") {
         if (typeof handler !== "function") return;
-        this.routes.set(path, handler);
+        this.routes.set(path, { handler, target });
     },
     
     // 解析URL中的路径参数
@@ -1456,10 +1457,7 @@ const _Router = {
     // 导航到指定路径
     nav(path, replace = false) {
         setTimeout(() => {
-            if (!this.routes.has(path)) {
-                console.warn(`路由不存在: ${path}`);
-                return;
-            }
+            if (!this.routes.has(path)) return void console.warn(`路由不存在: ${path}`);
             
             try {
                 const url = new URL(window.location.href);
@@ -1475,20 +1473,29 @@ const _Router = {
     
     // 执行指定路径的路由处理器
     _executeRoute(path) {
-        if (this.currentPath === path) return;
+        const routeInfo = this.routes.get(path);
+        if (!routeInfo) return;
         
-        // 隐藏所有页面
-        this.pageContainers.forEach((container) => container.style.display = "none");
+        const { target: targetName } = routeInfo;
+        const targetContainer = this.routeTargets.get(targetName);
         
-        // 显示目标页面
-        const targetContainer = this.pageContainers.get(path);
-        if (targetContainer) targetContainer.style.display = "block";
-        this.currentPath = path;
+        // 如果是新路径，隐藏当前容器的所有页面
+        if (this.currentPaths.get(targetName) !== path) {
+            // 隐藏当前容器的所有页面
+            this.pageContainers.forEach((pageInfo) => (pageInfo.target === targetName) && (pageInfo.container.style.display = "none"));
+            
+            // 显示目标页面
+            const pageInfo = this.pageContainers.get(path);
+            if (pageInfo && pageInfo.container) pageInfo.container.style.display = "block";
+            
+            // 更新当前路径
+            this.currentPaths.set(targetName, path);
+        }
         
-        const handler = this.routes.get(path);
-        if (handler) {
+        // 执行路由处理器
+        if (routeInfo.handler) {
             try {
-                handler();
+                routeInfo.handler();
             } catch (error) {
                 console.error(`路由执行错误 [${path}]:`, error);
             }
@@ -1497,37 +1504,43 @@ const _Router = {
     
     // 预渲染所有页面
     _prerenderAllPages() {
-        const routerView = document.getElementById("view");
-        if (!routerView) return;
-        
-        // 清除可能存在的旧内容
-        routerView.innerHTML = "";
+        // 收集所有路由目标容器
+        document.querySelectorAll("[route]").forEach(el => {
+            const targetName = el.getAttribute("route");
+            this.routeTargets.set(targetName, el);
+            // 清空容器内容
+            el.innerHTML = "";
+        });
         
         // 渲染所有注册的路由页面
-        this.routes.forEach((_, path) => this._renderPage(path, routerView));
+        this.routes.forEach((routeInfo, path) => this._renderPage(path, routeInfo.target));
     },
     
     // 渲染单个页面
-    _renderPage(path, container) {
+    _renderPage(path, targetName) {
+        const targetContainer = this.routeTargets.get(targetName);
+        if (!targetContainer) return;
+        
         // 创建页面容器
         const pageContainer = document.createElement("div");
         pageContainer.className = "route-page";
         pageContainer.setAttribute("data-route-path", path);
+        pageContainer.setAttribute("data-route-target", targetName);
         pageContainer.style.display = "none"; // 默认隐藏
         
-        // 存储页面容器
-        this.pageContainers.set(path, pageContainer);
+        // 存储页面容器信息
+        this.pageContainers.set(path, { container: pageContainer, target: targetName });
         
         // 获取原始页面元素的HTML内容
-        const originalHTML = this.originalPageElements.get(path);
-        if (originalHTML) {
-            pageContainer.innerHTML = originalHTML;
+        const pageInfo = this.originalPageElements.get(path);
+        if (pageInfo && pageInfo.html) {
+            pageContainer.innerHTML = pageInfo.html;
             
             // 处理动态内容
             _processElement(pageContainer, window.__rootScope || {});
         }
         
-        container.appendChild(pageContainer);
+        targetContainer.appendChild(pageContainer);
     },
     
     init() {
@@ -1546,7 +1559,7 @@ const _Router = {
         // 浏览器前进后退
         this._popstateHandler = () => {
             const path = this._parsePath();
-            if (path && path !== this.currentPath) this._executeRoute(path);
+            if (path && this.routes.has(path)) this._executeRoute(path);
         };
         
         window.addEventListener("popstate", this._popstateHandler);
@@ -1555,18 +1568,14 @@ const _Router = {
     // 收集所有原始页面内容并从DOM中移除
     _collectAndRemoveOriginalPages() {
         const pageElements = document.querySelectorAll("[r-page]");
-        
         pageElements.forEach(pageElement => {
             const pageName = pageElement.getAttribute("r-page");
+            const targetName = pageElement.getAttribute("&route") || "view"; // 获取目标容器名，默认view
+            
             if (pageName) {
-                // 保存HTML内容
-                this.originalPageElements.set(pageName, pageElement.innerHTML);
-                
-                // 注册路由
-                this.add(pageName, new Function());
-                
-                // 从DOM中移除原始元素
-                pageElement.remove();
+                this.originalPageElements.set(pageName, { html: pageElement.innerHTML, target: targetName });
+                this.add(pageName, new Function(), targetName); // 注册路由时指定目标容器
+                pageElement.remove(); // 从DOM中移除原始元素
             }
         });
     }
