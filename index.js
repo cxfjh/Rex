@@ -435,7 +435,7 @@ _registerDirective("r-click", (el, code, scope) => {
     // 提前检查是否需要处理（避免不必要的操作）
     if (el.__clickEventType === eventType && el.__clickCode === code) return;
     
-    // 清理函数优化
+    // 清理函数
     const cleanup = () => {
         if (el.__clickHandler) {
             el.removeEventListener(el.__clickEventType, el.__clickHandler);
@@ -468,7 +468,7 @@ _registerDirective("r-click", (el, code, scope) => {
         if (isKeyboardEvent && keyFilter) {
             const normalizedFilter = KEY_MAP[keyFilter] || keyFilter;
             if (event.key.toLowerCase() !== normalizedFilter.toLowerCase() && event.key !== normalizedFilter) return;
-            // 优化默认行为阻止逻辑
+            // 默认行为阻止逻辑
             if (eventType === "keydown" && event.key === "Enter" && event.target.tagName !== "TEXTAREA") event.preventDefault();
         }
         
@@ -1270,8 +1270,8 @@ _registerDirective("r-dom", (el, compName, scope, deps) => {
     let componentInstance = null;
     let retryTimer = null;
     let retryCount = 0;
-    const MAX_RETRY_COUNT = 3; // 最大重试次数
-    const RETRY_INTERVAL = 60; // 重试间隔(ms)
+    const MAX_RETRY_COUNT = 5; // 最大重试次数
+    const RETRY_INTERVAL = 16; // 重试间隔(ms)
     
     // 提取组件 props
     const getComponentProps = () => {
@@ -1339,7 +1339,7 @@ _registerDirective("r-dom", (el, compName, scope, deps) => {
         return false;
     };
     
-    // 重试机制（带指数退避）
+    // 重试机制
     const startRetry = () => {
         if (retryTimer) return;
         retryTimer = setInterval(() => {
@@ -1354,7 +1354,7 @@ _registerDirective("r-dom", (el, compName, scope, deps) => {
         }, RETRY_INTERVAL);
     };
     
-    // 依赖变化时的处理（防抖优化）
+    // 依赖变化时的处理
     let pendingUpdate = null;
     const handleDependencyChange = () => {
         if (pendingUpdate) clearTimeout(pendingUpdate);
@@ -1376,7 +1376,7 @@ _registerDirective("r-dom", (el, compName, scope, deps) => {
     if (!mountComponent()) startRetry(); // 组件未就绪，启动重试机制
     
     
-    // 响应式依赖收集（优化版本）
+    // 响应式依赖收集
     const elDeps = _elDeps.get(el) || new Set();
     const collectedDeps = new Set();
     
@@ -1396,7 +1396,7 @@ _registerDirective("r-dom", (el, compName, scope, deps) => {
     const allDeps = new Set([...elDeps, ...collectedDeps]);
     allDeps.forEach(varName => _depsMap.get(scope)?.subscribe(handleDependencyChange, varName));
     
-    // 清理逻辑（增强版本）
+    // 清理逻辑
     const cleanup = () => {
         // 清理重试计时器
         if (retryTimer) {
@@ -1786,13 +1786,13 @@ window.provide = (key, value = null) => {
  * @param {string} options.template - 组件HTML模板
  * @param {string} options.style - 组件CSS样式
  * @param {Function} options.script - 组件脚本逻辑 (api, utils) => ({ ... })
- * @param {Object} [options.props] - 组件接收的属性定义
- * @param {string|HTMLElement} [options.mountTo] - 可选，组件定义后立即挂载到目标元素
- * @returns {Function|Object} 如果提供了 mountTo，则返回组件实例；否则返回一个渲染函数
+ * @param {Object} [options.pro] - 组件接收的属性定义
+ * @param {string|HTMLElement} [options.to] - 可选，组件定义后立即挂载到目标元素
+ * @returns {Function|Object} 如果提供了to，则返回组件实例；否则返回一个渲染函数
  */
 window.dom = (compName, options) => {
     if (typeof compName !== "string" || !options || typeof options !== "object") throw new Error("dom() 需传入组件名称和配置对象");
-    const { template, style, script, props: propDefinitions, mountTo, styleIsolation = true, registerAs } = options;
+    const { template, style, script, pro: proDefinitions, to, sty = true } = options;
     if (!template) console.warn(`组件 "${compName}" 缺少 template`);
     if (!window.__componentResetCache) window.__componentResetCache = new Set();
     
@@ -1813,7 +1813,7 @@ window.dom = (compName, options) => {
     
     // 样式处理
     let styleElement = null;
-    const processStyle = (isolationEnabled = styleIsolation) => {
+    const processStyle = (isolationEnabled = sty) => {
         if (styleElement) {
             styleElement.remove();
             styleElement = null;
@@ -1972,7 +1972,7 @@ window.dom = (compName, options) => {
     };
     
     // DOM作用域添加函数
-    const addComponentScopeToDOM = (element, isolationEnabled = styleIsolation) => {
+    const addComponentScopeToDOM = (element, isolationEnabled = sty) => {
         if (element.nodeType === Node.ELEMENT_NODE) {
             // 根据隔离状态决定是否添加作用域属性
             if (isolationEnabled) element.setAttribute(`data-${compId}`, "");
@@ -1988,26 +1988,26 @@ window.dom = (compName, options) => {
     const NON_LIFECYCLE_METHODS = new Set(["setup", ...LIFECYCLE_HOOKS]);
     
     // 组件工厂函数
-    const componentFactory = (props = {}, isolationOverride) => {
-        const resolvedProps = Object.create(null);
-        if (propDefinitions?.default) Object.assign(resolvedProps, propDefinitions.default);
-        Object.assign(resolvedProps, props);
+    const componentFactory = (pro = {}, isolationOverride) => {
+        const resolvedPro = Object.create(null);
+        if (proDefinitions) Object.assign(resolvedPro, proDefinitions);
+        Object.assign(resolvedPro, pro);
         
         // 优先使用挂载时的参数，其次使用组件定义时的默认值
-        const finalIsolation = isolationOverride !== undefined ? isolationOverride : styleIsolation;
+        const finalIsolation = isolationOverride !== undefined ? isolationOverride : sty;
         
         const componentScope = reactive({
             $compName: compName,
             $compId: compId,
-            $props: resolvedProps,
+            $pro: resolvedPro,
             $refs: Object.create(null),
-            $styleIsolation: finalIsolation
+            $sty: finalIsolation
         });
         
         let scriptResult = Object.create(null);
         if (typeof script === "function") {
             try {
-                scriptResult = script({ $props: componentScope.$props, $refs: componentScope.$refs, $styleIsolation: finalIsolation }, utils) || {};
+                scriptResult = script({ $pro: componentScope.$pro, $refs: componentScope.$refs.__raw, $sty: finalIsolation }, utils) || {};
             } catch (e) {
                 console.error(`[dom] 组件 "${compName}" 脚本执行错误:`, e);
             }
@@ -2033,7 +2033,7 @@ window.dom = (compName, options) => {
             if (!mountTargetEl?.nodeType || mountTargetEl.nodeType !== Node.ELEMENT_NODE) throw new Error(`组件 "${compName}" 挂载失败：无效的目标节点`);
             
             // 确定最终的样式隔离状态
-            const finalIsolation = isolationOverride !== undefined ? isolationOverride : styleIsolation;
+            const finalIsolation = isolationOverride !== undefined ? isolationOverride : sty;
             const fragment = document.createDocumentFragment();
             
             // 处理样式，传入隔离状态
@@ -2084,13 +2084,13 @@ window.dom = (compName, options) => {
     };
     
     // 挂载函数
-    const mountComponent = (props, target, isolationOverride) => {
-        const mountTarget = typeof target === "string" ? document.querySelector(target) : target;
+    const mountComponent = (pro, name, isolationOverride) => {
+        const mountTarget = typeof name === "string" ? document.querySelector(name) : name;
         if (!mountTarget) {
             console.error(`组件 "${compName}" 挂载失败：找不到目标元素`);
             return null;
         }
-        const { render } = componentFactory(props, isolationOverride);
+        const { render } = componentFactory(pro, isolationOverride);
         return render(mountTarget, isolationOverride);
     };
     
@@ -2098,31 +2098,26 @@ window.dom = (compName, options) => {
     const autoRegisterToRoot = () => {
         // 计算最终注册名
         const calculateRegisterName = () => {
-            if (typeof registerAs === "string" && registerAs.trim()) return registerAs.trim();
+            if (typeof as === "string" && as.trim()) return as.trim();
             if (typeof compName === "string" && compName.trim()) return compName.trim();
             return `comp-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`; // 生成唯一组件名
         };
         
-        // 创建组件工厂函数
+        // 创建组件工厂函数 - 手动注册时参数顺序：name第一，sty第二，pro第三(默认{})
         const createComponentFactory = (finalRegisterName, targetCompName) => {
             return (...args) => {
-                let props = {};
-                let target = null;
-                let styleIsolation = undefined;
+                let props;
+                let target;
+                let styleIsolation;
                 
                 // 参数解析逻辑
                 if (args.length === 1 && typeof args[0] === "object") ({ props = {}, target, styleIsolation } = args[0]);
-                else if (args.length >= 2) [props, target, styleIsolation] = args;
-                else {
-                    console.error(`组件 "${targetCompName}" 挂载失败：参数格式错误，期望对象或参数列表`);
-                    return null;
-                }
+                else [props, target, styleIsolation] = args;
                 
                 if (!target) {
                     console.error(`组件 "${targetCompName}" 挂载失败：缺少target参数`);
                     return null;
                 }
-                
                 return mountComponent(props, target, styleIsolation);
             };
         };
@@ -2151,20 +2146,15 @@ window.dom = (compName, options) => {
     autoRegisterToRoot();
     
     // 支持多种调用方式
-    if (mountTo) return mountComponent({}, mountTo);  // 如果定义了 mountTo，立即挂载
+    if (to) return mountComponent({}, to);  // 如果定义了to，立即挂载
     else {
         return (...args) => {
             if (args.length === 1 && typeof args[0] === "object") {
-                // 对象形式：UserComponent({ props: {}, target: "#app", styleIsolation: false })
-                const { props = {}, target, styleIsolation } = args[0];
-                return mountComponent(props, target, styleIsolation);
-            } else if (args.length >= 2) {
-                // 参数形式：UserComponent(props, target, styleIsolation)
-                const [props, target, styleIsolation] = args;
-                return mountComponent(props, target, styleIsolation);
+                const { pro = {}, name, sty } = args[0];
+                return mountComponent(pro, name, sty);
             } else {
-                console.error(`组件 "${compName}" 挂载失败：参数格式错误`);
-                return null;
+                const [name, sty, pro = {}] = args;
+                return mountComponent(pro, name, sty);
             }
         };
     }
