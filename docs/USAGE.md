@@ -8,11 +8,11 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <title>Rex.js 快速开始</title>
-    <!-- 在顶部引入，二选一即可 -->
-    <script src="https://cxfjh.cn/js/rex/0.0.1.js"></script>        <!-- 完整版本 -->
-    <script src="https://cxfjh.cn/js/rex/min.0.0.1.js"></script>    <!-- 压缩版本 -->
+   <meta charset="UTF-8">
+   <title>Rex.js 快速开始</title>
+   <!-- 在顶部引入，二选一即可 -->
+   <script src="https://cxfjh.cn/js/rex/0.0.1.js"></script>        <!-- 完整版本 -->
+   <script src="https://cxfjh.cn/js/rex/min.0.0.1.js"></script>    <!-- 压缩版本 -->
 </head>
 <body>
 </body>
@@ -24,25 +24,25 @@
 ```html
 
 <body>
-    <!-- 响应式计数示例，{{ }} 执行表达式语句时需要加上 .value -->
-    <h1>{{ count }} {{ count.value + 2 }}</h1>
-    
-    <!-- 事件绑定示例，里面执行的是 JavaScript 代码，需要加 .value -->
-    <button r-click="count.value++">增加</button>
-    <button r-click="count.value--">减少</button>
-    
-    <!-- 双向绑定 -->
-    <input type="text" r-model="name" placeholder="输入名字">
-    <p>你好，{{ name }}!</p>
-    
-    <script>
-        // 定义响应式数据
-        const count = ref(0);
-        const name = ref("");
-        
-        // r-model 双向绑定需要provide注册
-        provide({ name });
-    </script>
+   <!-- 响应式计数示例，{{ }} 执行表达式语句时需要加上 .value -->
+   <h1>{{ count }} {{ count.value + 2 }}</h1>
+
+   <!-- 事件绑定示例，里面执行的是 JavaScript 代码，需要加 .value -->
+   <button r-click="count.value++">增加</button>
+   <button r-click="count.value--">减少</button>
+
+   <!-- 双向绑定 -->
+   <input type="text" r-model="name" placeholder="输入名字">
+   <p>你好，{{ name }}!</p>
+
+   <script>
+      // 定义响应式数据
+      const count = ref(0);
+      const name = ref("");
+
+      // r-model 双向绑定需要provide注册
+      provide({ name });
+   </script>
 </body>
 </html>
 ```
@@ -68,8 +68,8 @@ count.value++; // 修改值，页面自动更新
 ```javascript
 // 定义对象响应式数据
 const user = reactive({
-    name: "李四",
-    age: 20
+   name: "李四",
+   age: 20
 });
 
 // 直接修改，无需 .value
@@ -120,12 +120,12 @@ provide({ name, age }); // 注册
 ```html
 <!-- 循环count次，索引从1开始，索引默认是 index  -->
 <div r-for="count">
-    <p>第{{ index }}项</p>
+   <p>第{{ index }}项</p>
 </div>
 
 <!-- 自定义索引名-->
 <div r-for="5" index="i">
-    <p>{{ i }}</p>
+   <p>{{ i }}</p>
 </div>
 ```
 
@@ -134,12 +134,12 @@ provide({ name, age }); // 注册
 ```html
 <!-- 循环list数组，内容值默认是 value，索引默认是 index  -->
 <div r-arr="list" index="idx">
-    索引：{{ idx }} - 值：{{ value.name }}
+   索引：{{ idx }} - 值：{{ value.name }}
 </div>
 
 <!-- 自定义值变量名-->
 <div r-arr="users" value="user">
-    {{ user.name }} - {{ user.age }}
+   {{ user.name }} - {{ user.age }}
 </div>
 ```
 
@@ -148,18 +148,18 @@ provide({ name, age }); // 注册
 ```html
 <!-- 基础用法 -->
 <div r-api="https://api.com/data" list="result">
-    {{ value.title }}
+   {{ value.title }}
 </div>
 
 <!-- 带参数配置 -->
 <div
-    r-api="https://api.com/data"         <!-- 请求地址-->
-    meth="POST"                          <!-- 请求方法，默认GET -->
-    hdr='{"Authorization": "token"}'     <!-- 请求头 -->
-    list="data"                          <!-- 获取请求结果的data数据 -->
-    refr="#refreshBtn"                   <!-- 刷新按钮 -->
-    arr="data"                           <!-- 表示需要手动渲染数据，data为数组变量 -->
-    aw                                   <!-- 表示手动请求，返回一个_aw变量布尔值，true表示请求完成, false表示请求未完成 -->
+        r-api="https://api.com/data"         <!-- 请求地址-->
+meth="POST"                          <!-- 请求方法，默认GET -->
+hdr='{"Authorization": "token"}'     <!-- 请求头 -->
+list="data"                          <!-- 获取请求结果的data数据 -->
+refr="#refreshBtn"                   <!-- 刷新按钮 -->
+arr="data"                           <!-- 表示需要手动渲染数据，data为数组变量 -->
+aw                                   <!-- 表示手动请求，返回一个_aw变量布尔值，true表示请求完成, false表示请求未完成 -->
 >
 <button r-click="fetchAndRender()">加载数据</button>
 <div r-if="_aw" r-arr="data">{{ value.content }}</div>
@@ -184,13 +184,13 @@ provide({ name, age }); // 注册
 <button r-click="handleSubmit()">提交</button>
 
 <script>
-    const count = ref(0);
-    
-    // 定义全局函数
-    function handleSubmit() {
-        console.log("提交数据", count.value);
-        alert("提交成功！");
-    }
+   const count = ref(0);
+
+   // 定义全局函数
+   function handleSubmit() {
+      console.log("提交数据", count.value);
+      alert("提交成功！");
+   }
 </script>
 ```
 
@@ -207,10 +207,10 @@ provide({ name, age }); // 注册
 
 <!-- 键盘事件 -->
 <input
-    type="text"
-    r-click="console.log('按下了：' + event.key)"
-    keydown
-    placeholder="按下键盘触发"
+        type="text"
+        r-click="console.log('按下了：' + event.key)"
+        keydown
+        placeholder="按下键盘触发"
 >
 ```
 
@@ -221,25 +221,25 @@ provide({ name, age }); // 注册
 ```html
 <!-- 只在按下Enter键时触发 -->
 <input
-    type="text"
-    r-click="handleSearch()"
-    keydown="enter"
-    placeholder="按Enter搜索"
+        type="text"
+        r-click="handleSearch()"
+        keydown="enter"
+        placeholder="按Enter搜索"
 >
 
 <!-- 只在按下Esc键时触发 -->
 <input
-    type="text"
-    r-click="this.value = ''"
-    keydown="esc"
-    placeholder="按Esc清空"
+        type="text"
+        r-click="this.value = ''"
+        keydown="esc"
+        placeholder="按Esc清空"
 >
 
 <!-- 支持原生按键名 -->
 <input
-    type="text"
-    r-click="console.log('按下了空格')"
-    keydown=" "  <!-- 空格按键 -->
+        type="text"
+        r-click="console.log('按下了空格')"
+        keydown=" "  <!-- 空格按键 -->
 >
 ```
 
@@ -248,9 +248,9 @@ provide({ name, age }); // 注册
 ```html
 <!-- 使用 template 标签定义名为"user-card"的组件 -->
 <template r-cp="user-card">
-    <div class="card">
-        {{ name }}
-    </div>
+   <div class="card">
+      {{ name }}
+   </div>
 </template>
 
 <!-- 使用组件，使用$来传递数据 -->
@@ -266,17 +266,17 @@ provide({ name, age }); // 注册
 ```javascript
 // 定义组件
 const UserComponent = dom("user", {
-    // 模板
-    template: `
+   // 模板
+   template: `
     <div class="user-card">
       <h3 ref="h3">{{ username }}</h3>
       <p>年龄：{{ age.value }}</p>
       <button r-click="increaseAge()">增加年龄</button>
     </div>
   `,
-    
-    // 样式（支持作用域隔离）
-    style: `
+
+   // 样式（支持作用域隔离）
+   style: `
     .user-card {
       border: 1px solid #ccc;
       padding: 16px;
@@ -290,49 +290,49 @@ const UserComponent = dom("user", {
       border-radius: 4px;
     }
   `,
-    
-    // 脚本逻辑
-    script: ({ $pro, $refs }) => {
-        // 初始化数据
-        const setup = () => {
-            const age = ref($pro.initAge || 20);
-            const username = ref("匿名用户");
-            
-            // 方法
-            const increaseAge = () => {
-               console.log($refs.h3.innerHTML);
-               age.value++;
-            };
 
-            // 默认值
-            console.log($pro.title)
-            
-            return { age, username, increaseAge };
-        };
-        
-        // 生命周期钩子
-        function mounted() {
-            console.log("组件 DOM 挂载完成");
-        };
-        
-        function unmounted() {
-            console.log(`组件 DOM 销毁时调用`);
-        }
-        
-        return { setup, mounted, unmounted };
-    },
-    
-    // 样式隔离（默认启用）手动 UserComponent( "#app", true, { initAge: 18 });
-    sty: true,
-   
-    // 默认值属性
-    por: {
-        title: "默认值"
-    }
-    
-    // 自动挂载到指定元素，手动 UserComponent("#app", { initAge: 18 });
-    // name: "#app",
-   
+   // 脚本逻辑
+   script: ({ $pro, $refs }) => {
+      // 初始化数据
+      const setup = () => {
+         const age = ref($pro.initAge || 20);
+         const username = ref("匿名用户");
+
+         // 方法
+         const increaseAge = () => {
+            console.log($refs.h3.innerHTML);
+            age.value++;
+         };
+
+         // 默认值
+         console.log($pro.title)
+
+         return { age, username, increaseAge };
+      };
+
+      // 生命周期钩子
+      function mounted() {
+         console.log("组件 DOM 挂载完成");
+      };
+
+      function unmounted() {
+         console.log(`组件 DOM 销毁时调用`);
+      }
+
+      return { setup, mounted, unmounted };
+   },
+
+   // 样式隔离（默认启用）手动 UserComponent( "#app", true, { initAge: 18 });
+   sty: true,
+
+   // 默认值属性
+   por: {
+      title: "默认值"
+   },
+
+   // 自动挂载到指定元素，手动 UserComponent("#app", { initAge: 18 });
+   // to: "#app",
+
    // 使用键值对
    // UserComponent({ name: "#app", sty: true, pro: { initAge: 18 }});
 });
